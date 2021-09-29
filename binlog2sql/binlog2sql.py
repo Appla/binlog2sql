@@ -14,7 +14,8 @@ class Binlog2sql(object):
 
     def __init__(self, connection_settings, start_file=None, start_pos=None, end_file=None, end_pos=None,
                  start_time=None, stop_time=None, only_schemas=None, only_tables=None, no_pk=False,
-                 flashback=False, stop_never=False, back_interval=1.0, only_dml=True, sql_type=None, debug_mode=False):
+                 flashback=False, stop_never=False, back_interval=1.0, only_dml=True, sql_type=None,
+                 debug_mode=False, keep_tmp_file=False):
         """
         conn_setting: {'host': 127.0.0.1, 'port': 3306, 'user': user, 'passwd': passwd, 'charset': 'utf8'}
         """
@@ -40,8 +41,9 @@ class Binlog2sql(object):
         self.only_tables = only_tables if only_tables else None
         self.no_pk, self.flashback, self.stop_never, self.back_interval = (no_pk, flashback, stop_never, back_interval)
         self.only_dml = only_dml
-        self.sql_type = [t.upper() for t in sql_type] if sql_type else []
+        self.sql_type = set([t.upper() for t in sql_type] if sql_type else [])
         self.debug_mode = debug_mode
+        self.keep_tmp_file = keep_tmp_file
         self.binlogList = []
         self.connection = pymysql.connect(**self.conn_setting)
         with self.connection.cursor() as cursor:
@@ -62,6 +64,7 @@ class Binlog2sql(object):
                 raise ValueError('missing server_id in %s:%s' % (self.conn_setting['host'], self.conn_setting['port']))
 
     def process_binlog(self):
+        # ignored_events
         stream = BinLogStreamReader(connection_settings=self.conn_setting, server_id=self.server_id,
                                     log_file=self.start_file, log_pos=self.start_pos, only_schemas=self.only_schemas,
                                     only_tables=self.only_tables, resume_stream=True, blocking=True)
@@ -70,7 +73,7 @@ class Binlog2sql(object):
         e_start_pos, last_pos = stream.log_pos, stream.log_pos
         # to simplify code, we do not use flock for tmp_file.
         tmp_file = create_unique_file('%s.%s' % (self.conn_setting['host'], self.conn_setting['port']))
-        with temp_open(tmp_file, "w", encoding='utf-8') as f_tmp, self.connection.cursor() as cursor:
+        with temp_open(tmp_file, "w", keep_tmp_file=self.keep_tmp_file, encoding='utf-8') as f_tmp, self.connection.cursor() as cursor:
             for binlog_event in stream:
                 if not self.stop_never:
                     try:
@@ -146,5 +149,6 @@ if __name__ == '__main__':
                             end_file=args.end_file, end_pos=args.end_pos, start_time=args.start_time,
                             stop_time=args.stop_time, only_schemas=args.databases, only_tables=args.tables,
                             no_pk=args.no_pk, flashback=args.flashback, stop_never=args.stop_never,
-                            back_interval=args.back_interval, only_dml=args.only_dml, sql_type=args.sql_type, debug_mode=args.debug_mode)
+                            back_interval=args.back_interval, only_dml=args.only_dml, sql_type=args.sql_type,
+                            debug_mode=args.debug_mode, keep_tmp_file=args.keep_tmp_file)
     binlog2sql.process_binlog()

@@ -42,14 +42,14 @@ def create_unique_file(filename):
 
 
 @contextmanager
-def temp_open(filename, mode, **kwargs):
+def temp_open(filename, mode, keep_tmp_file = False, **kwargs):
     f = open(filename, mode, **kwargs)
     try:
         yield f
     finally:
         f.close()
-        os.remove(filename)
-
+        if not keep_tmp_file:
+            os.remove(filename)
 
 def parse_args():
     """parse args for binlog2sql"""
@@ -102,6 +102,8 @@ def parse_args():
     parser.add_argument('--back-interval', dest='back_interval', type=float, default=1.0,
                         help="Sleep time between chunks of 1000 rollback sql. set it to 0 if do not need sleep")
     parser.add_argument('--debug', dest='debug_mode', type=bool, nargs='?', const=True, default=False,
+                        help="Enable debug mode or not")
+    parser.add_argument('--keep-tmp-file', dest='keep_tmp_file', type=bool, nargs='?', const=True, default=False,
                         help="Enable debug mode or not")
     return parser
 
@@ -245,12 +247,12 @@ def generate_sql_pattern(binlog_event, row=None, flashback=False, no_pk=False):
     return {'template': template, 'values': list(values)}
 
 
-def reversed_lines(fin):
+def reversed_lines(fin, decode_errors='strict'):
     """Generate the lines of file in reverse order."""
     part = ''
     for block in reversed_blocks(fin):
         if PY3PLUS:
-            block = block.decode("utf-8")
+            block = block.decode("utf-8", errors=decode_errors)
         for c in reversed(block):
             if c == '\n' and part:
                 yield part[::-1]
