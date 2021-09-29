@@ -103,8 +103,8 @@ def parse_args():
                         help="Sleep time between chunks of 1000 rollback sql. set it to 0 if do not need sleep")
     parser.add_argument('--debug', dest='debug_mode', type=bool, nargs='?', const=True, default=False,
                         help="Enable debug mode or not")
-    parser.add_argument('--keep-tmp-file', dest='keep_tmp_file', type=bool, nargs='?', const=True, default=False,
-                        help="Enable debug mode or not")
+    parser.add_argument('--keep-tmp-file', dest='keep_tmp_file', type=bool, nargs='?', const=True, default=False, help="Keep tmp file or not")
+    parser.add_argument('--try-bulk-insert', dest='try_bulk_insert', nargs='?', const=True, type=bool, default=False, help="Preferred bulk insert")
     return parser
 
 
@@ -169,6 +169,29 @@ def event_type(event):
         t = 'DELETE'
     return t
 
+def is_bulkable_event(event_type, flashback = False):
+    return isinstance(event_type, DeleteRowsEvent if flashback else WriteRowsEvent)
+
+def generate_bulk_insert_sql(cursor, binlog_event, rows, sort_key=False, e_start_pos = None):
+    sample_row = rows[0]
+    sample_row_values = dict(sorted(sample_row['values'].items())) if sort_key else sample_row['values']
+    # should sort this ?
+    template = 'INSERT INTO `{0}`.`{1}`({2}) VALUES '.format(
+        binlog_event.schema, binlog_event.table,
+        ', '.join(map(lambda key: '`%s`' % key, sample_row_values.keys())),
+    )
+    sample_len = len(sample_row_values)
+    value_list = ['(']
+    val_placeholder = ', '.join(['%s'] * sample_len)
+    # val_placeholder = ', '.join('{%d}' % idx for idx in range(0, sample_len))
+    for row in rows:
+        row_values = dict(sorted(row['values'].items())) if sort_key else row['values']
+        assert sample_len == len(row_values), 'same row length required'
+        value_list.append(cursor.mogrify(val_placeholder, tuple(map(fix_object, row_values.values()))))
+        value_list.append('), (')
+    value_list.pop()
+    value_list.append(');')
+    return template + ''.join(value_list) + (' #start %s end %s time %s' % (e_start_pos, binlog_event.packet.log_pos, datetime.datetime.fromtimestamp(binlog_event.timestamp)) if e_start_pos else '')
 
 def concat_sql_from_binlog_event(cursor, binlog_event, row=None, e_start_pos=None, flashback=False, no_pk=False):
     if flashback and no_pk:

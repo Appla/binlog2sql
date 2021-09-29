@@ -7,7 +7,7 @@ import pymysql
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.event import QueryEvent, RotateEvent, FormatDescriptionEvent
 from binlog2sql_util import command_line_args, concat_sql_from_binlog_event, create_unique_file, temp_open, \
-    reversed_lines, is_dml_event, event_type
+    reversed_lines, is_dml_event, event_type, is_bulkable_event, generate_bulk_insert_sql
 
 
 class Binlog2sql(object):
@@ -15,7 +15,7 @@ class Binlog2sql(object):
     def __init__(self, connection_settings, start_file=None, start_pos=None, end_file=None, end_pos=None,
                  start_time=None, stop_time=None, only_schemas=None, only_tables=None, no_pk=False,
                  flashback=False, stop_never=False, back_interval=1.0, only_dml=True, sql_type=None,
-                 debug_mode=False, keep_tmp_file=False):
+                 debug_mode=False, keep_tmp_file=False, try_bulk_insert=False):
         """
         conn_setting: {'host': 127.0.0.1, 'port': 3306, 'user': user, 'passwd': passwd, 'charset': 'utf8'}
         """
@@ -44,6 +44,7 @@ class Binlog2sql(object):
         self.sql_type = set([t.upper() for t in sql_type] if sql_type else [])
         self.debug_mode = debug_mode
         self.keep_tmp_file = keep_tmp_file
+        self.try_bulk_insert = try_bulk_insert
         self.binlogList = []
         self.connection = pymysql.connect(**self.conn_setting)
         with self.connection.cursor() as cursor:
@@ -105,13 +106,20 @@ class Binlog2sql(object):
                     if sql:
                         print(sql)
                 elif is_dml_event(binlog_event) and event_type(binlog_event) in self.sql_type:
-                    for row in binlog_event.rows:
-                        sql = concat_sql_from_binlog_event(cursor=cursor, binlog_event=binlog_event, no_pk=self.no_pk,
-                                                           row=row, flashback=self.flashback, e_start_pos=e_start_pos)
+                    if self.try_bulk_insert and len(binlog_event.rows) > 1 and is_bulkable_event(binlog_event, flashback=self.flashback):
+                        sql = generate_bulk_insert_sql(cursor, binlog_event, binlog_event.rows, e_start_pos=e_start_pos)
                         if self.flashback:
                             f_tmp.write(sql + '\n')
                         else:
                             print(sql)
+                    else:
+                        for row in binlog_event.rows:
+                            sql = concat_sql_from_binlog_event(cursor=cursor, binlog_event=binlog_event, no_pk=self.no_pk,
+                                                               row=row, flashback=self.flashback, e_start_pos=e_start_pos)
+                            if self.flashback:
+                                f_tmp.write(sql + '\n')
+                            else:
+                                print(sql)
 
                 if not (isinstance(binlog_event, RotateEvent) or isinstance(binlog_event, FormatDescriptionEvent)):
                     last_pos = binlog_event.packet.log_pos
@@ -150,5 +158,5 @@ if __name__ == '__main__':
                             stop_time=args.stop_time, only_schemas=args.databases, only_tables=args.tables,
                             no_pk=args.no_pk, flashback=args.flashback, stop_never=args.stop_never,
                             back_interval=args.back_interval, only_dml=args.only_dml, sql_type=args.sql_type,
-                            debug_mode=args.debug_mode, keep_tmp_file=args.keep_tmp_file)
+                            debug_mode=args.debug_mode, keep_tmp_file=args.keep_tmp_file, try_bulk_insert=args.try_bulk_insert)
     binlog2sql.process_binlog()
