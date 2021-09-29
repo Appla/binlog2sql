@@ -64,6 +64,8 @@ def parse_args():
                                  help='MySQL Password to use', default='')
     connect_setting.add_argument('-P', '--port', dest='port', type=int,
                                  help='MySQL port to use', default=3306)
+    connect_setting.add_argument('--default-character-set', dest='charset', type=str,
+                                 help='MySQL charset to use', default='utf8')
     interval = parser.add_argument_group('interval filter')
     interval.add_argument('--start-file', dest='start_file', type=str, help='Start binlog file to be parsed')
     interval.add_argument('--start-position', '--start-pos', dest='start_pos', type=int,
@@ -99,6 +101,8 @@ def parse_args():
                         help='Flashback data to start_position of start_file', default=False)
     parser.add_argument('--back-interval', dest='back_interval', type=float, default=1.0,
                         help="Sleep time between chunks of 1000 rollback sql. set it to 0 if do not need sleep")
+    parser.add_argument('--debug', dest='debug_mode', type=bool, nargs='?', const=True, default=False,
+                        help="Enable debug mode or not")
     return parser
 
 
