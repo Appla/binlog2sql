@@ -42,8 +42,8 @@ def create_unique_file(filename):
 
 
 @contextmanager
-def temp_open(filename, mode):
-    f = open(filename, mode)
+def temp_open(filename, mode, **kwargs):
+    f = open(filename, mode, **kwargs)
     try:
         yield f
     finally:
