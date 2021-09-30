@@ -15,7 +15,7 @@ class Binlog2sql(object):
     def __init__(self, connection_settings, start_file=None, start_pos=None, end_file=None, end_pos=None,
                  start_time=None, stop_time=None, only_schemas=None, only_tables=None, no_pk=False,
                  flashback=False, stop_never=False, back_interval=1.0, only_dml=True, sql_type=None,
-                 debug_mode=False, keep_tmp_file=False, try_bulk_insert=False):
+                 debug_mode=False, keep_tmp_file=False, try_bulk_insert=False, reverse_lines=False):
         """
         conn_setting: {'host': 127.0.0.1, 'port': 3306, 'user': user, 'passwd': passwd, 'charset': 'utf8'}
         """
@@ -45,7 +45,8 @@ class Binlog2sql(object):
         self.debug_mode = debug_mode
         self.keep_tmp_file = keep_tmp_file
         self.try_bulk_insert = try_bulk_insert
-        self.binlogList = []
+        self.reverse_lines = reverse_lines
+        self.binlog_list = set()
         self.connection = pymysql.connect(**self.conn_setting)
         with self.connection.cursor() as cursor:
             cursor.execute("SHOW MASTER STATUS")
@@ -57,7 +58,7 @@ class Binlog2sql(object):
             binlog2i = lambda x: x.split('.')[1]
             for binary in bin_index:
                 if binlog2i(self.start_file) <= binlog2i(binary) <= binlog2i(self.end_file):
-                    self.binlogList.append(binary)
+                    self.binlog_list.add(binary)
 
             cursor.execute("SELECT @@server_id")
             self.server_id = cursor.fetchone()[0]
@@ -89,7 +90,7 @@ class Binlog2sql(object):
                                 or isinstance(binlog_event, FormatDescriptionEvent)):
                             last_pos = binlog_event.packet.log_pos
                         continue
-                    elif (stream.log_file not in self.binlogList) or \
+                    elif (stream.log_file not in self.binlog_list) or \
                             (self.end_pos and stream.log_file == self.end_file and stream.log_pos > self.end_pos) or \
                             (stream.log_file == self.eof_file and stream.log_pos > self.eof_pos) or \
                             (event_time >= self.stop_time):
@@ -128,12 +129,19 @@ class Binlog2sql(object):
 
             stream.close()
             f_tmp.close()
-            if self.flashback:
+            if self.flashback and self.reverse_lines:
                 self.print_rollback_sql(filename=tmp_file)
         return True
 
     def print_rollback_sql(self, filename):
-        """print rollback sql from tmp_file"""
+        """
+        推荐自行reverse执行的语句，效率会更高
+        @see https://www.baeldung.com/linux/reverse-order-of-file-lines
+        print rollback sql from tmp_file
+        tail -r file                  //BSD  NOT LINUX
+        tac file                      //reverse of cat
+        sed -i '1!G;h;$!d' file       //may slowly than the others
+        """
         with open(filename, "rb") as f_tmp:
             batch_size = 1000
             i = 0
@@ -158,5 +166,6 @@ if __name__ == '__main__':
                             stop_time=args.stop_time, only_schemas=args.databases, only_tables=args.tables,
                             no_pk=args.no_pk, flashback=args.flashback, stop_never=args.stop_never,
                             back_interval=args.back_interval, only_dml=args.only_dml, sql_type=args.sql_type,
-                            debug_mode=args.debug_mode, keep_tmp_file=args.keep_tmp_file, try_bulk_insert=args.try_bulk_insert)
+                            debug_mode=args.debug_mode, keep_tmp_file=args.keep_tmp_file, try_bulk_insert=args.try_bulk_insert,
+                            reverse_lines=args.reverse_lines)
     binlog2sql.process_binlog()

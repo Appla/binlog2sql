@@ -105,6 +105,7 @@ def parse_args():
                         help="Enable debug mode or not")
     parser.add_argument('--keep-tmp-file', dest='keep_tmp_file', type=bool, nargs='?', const=True, default=False, help="Keep tmp file or not")
     parser.add_argument('--try-bulk-insert', dest='try_bulk_insert', nargs='?', const=True, type=bool, default=False, help="Preferred bulk insert")
+    parser.add_argument('--reverse-output', dest='reverse_lines', nargs='?', const=True, type=bool, default=False, help="Revese flashback sql orders")
     return parser
 
 
@@ -269,13 +270,30 @@ def generate_sql_pattern(binlog_event, row=None, flashback=False, no_pk=False):
 
     return {'template': template, 'values': list(values)}
 
+def invalid_utf8_prefix_len(byte_list):
+    invalid_len = 0
+    for code in byte_list:
+        if 127 < code < 192:
+            invalid_len += 1
+        else:
+            break
+    return invalid_len
 
-def reversed_lines(fin, decode_errors='strict'):
+def reversed_lines(fin):
     """Generate the lines of file in reverse order."""
     part = ''
-    for block in reversed_blocks(fin):
+    opts = {
+        'offset': 0,
+    }
+    for block in reversed_blocks(fin, opts=opts):
         if PY3PLUS:
-            block = block.decode("utf-8", errors=decode_errors)
+            try:
+                opts['offset'] = 0
+                block = block.decode("utf-8")
+            except UnicodeDecodeError:
+                opts['offset'] = invalid_utf8_prefix_len(block)
+                block = block[opts['offset']:].decode("utf-8")
+
         for c in reversed(block):
             if c == '\n' and part:
                 yield part[::-1]
@@ -285,12 +303,15 @@ def reversed_lines(fin, decode_errors='strict'):
         yield part[::-1]
 
 
-def reversed_blocks(fin, block_size=4096):
+def reversed_blocks(fin, block_size=4096, opts = None):
     """Generate blocks of file's contents in reverse order."""
+    if not isinstance(opts, dict):
+        opts = {}
     fin.seek(0, os.SEEK_END)
     here = fin.tell()
     while 0 < here:
         delta = min(block_size, here)
         here -= delta
+        here += opts.get('offset', 0)
         fin.seek(here, os.SEEK_SET)
         yield fin.read(delta)
